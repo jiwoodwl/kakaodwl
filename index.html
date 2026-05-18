@@ -36,21 +36,29 @@
 
         .search-box {
             margin-bottom: 20px;
+            display: flex;
+            gap: 5px;
         }
 
         .search-box input {
-            width: 80%;
+            flex: 1;
             padding: 10px;
             border: 1px solid #ccc;
             border-radius: 4px;
+            outline: none;
         }
 
         .search-box button {
-            padding: 10px;
+            padding: 10px 15px;
             background-color: #fee500; /* 카카오 노란색 */
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            font-weight: bold;
+        }
+
+        .search-box button:hover {
+            background-color: #fada0a;
         }
 
         /* 오른쪽 지도 섹션 */
@@ -59,36 +67,50 @@
             height: 100%;
         }
 
+        #placesList {
+            margin-top: 15px;
+        }
+
         #placesList li {
             list-style: none;
-            padding: 10px;
+            padding: 15px 10px;
             border-bottom: 1px solid #eee;
             cursor: pointer;
+            transition: background-color 0.2s;
         }
 
         #placesList li:hover {
             background-color: #e9ecef;
+        }
+
+        #placesList li strong {
+            display: block;
+            font-size: 15px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        #placesList li span {
+            font-size: 13px;
+            color: #666;
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <!-- 왼쪽: 검색 및 리스트 -->
     <div class="sidebar">
         <div class="search-box">
-            <input type="text" id="keyword" placeholder="장소를 입력하세요">
+            <input type="text" id="keyword" placeholder="장소를 입력하세요" onkeypress="if(event.key === 'Enter') searchPlaces()">
             <button onclick="searchPlaces()">검색</button>
         </div>
         <hr>
         <ul id="placesList"></ul>
     </div>
 
-    <!-- 오른쪽: 지도 -->
     <div id="map" class="map-area"></div>
 </div>
 
-<!-- 카카오맵 API 라이브러리 불러오기 (services 라이브러리 포함) -->
 <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=ecb7dbd146bceb26d523cb008b35e8eb&libraries=services"></script>
 
 <script>
@@ -96,12 +118,13 @@
     let map;
     let ps; // 장소 검색 객체
     let infowindow; // 정보창 객체
+    let markers = []; // 생성된 마커들을 관리할 배열 (초기화용)
 
     // 1. 페이지 로드 시 실행 (지도가 제대로 로드된 후 실행되도록 함)
     kakao.maps.load(function() {
         const mapContainer = document.getElementById('map');
         const mapOption = {
-            center: new kakao.maps.LatLng(37.566826, 126.9786567), // 위치 권한 허용 전 기본 중심 좌표 (서울시청)
+            center: new kakao.maps.LatLng(37.566826, 126.9786567), // 기본 중심 좌표 (서울시청)
             level: 5 // 확대 레벨
         };
 
@@ -124,8 +147,8 @@
                 // 지도의 중심을 현재 위치로 이동
                 map.setCenter(locPosition);
                 
-                // 현재 위치에 마커 표시 (선택 사항)
-                const marker = new kakao.maps.Marker({
+                // 현재 위치에 기본 마커 표시
+                const currentMarker = new kakao.maps.Marker({
                     map: map,
                     position: locPosition
                 });
@@ -159,24 +182,38 @@
         }
     }
 
-    // 검색된 장소 목록을 화면에 표시하는 함수
+    // 검색된 장소 목록과 마커를 화면에 표시하는 함수
     function displayPlaces(places) {
         const listEl = document.getElementById('placesList');
         const bounds = new kakao.maps.LatLngBounds();
         
-        // 기존 검색 결과 제거
-        listEl.innerHTML = '';
+        // 새로운 검색을 위해 기존 마커와 리스트 내용 지우기 (초기화)
+        clearResults();
 
         for (let i = 0; i < places.length; i++) {
             const placePosition = new kakao.maps.LatLng(places[i].y, places[i].x);
+            
+            // 1. 지도에 마커 생성 및 표시
+            const marker = new kakao.maps.Marker({
+                position: placePosition,
+                map: map
+            });
+            markers.push(marker); // 나중에 지울 수 있도록 배열에 보관
+
+            // 2. 왼쪽 리스트에 들어갈 아이템 엘리먼트 생성 (이름과 주소 나열)
             const itemEl = document.createElement('li');
+            const address = places[i].road_address_name ? places[i].road_address_name : places[i].address_name;
+            itemEl.innerHTML = `<strong>${places[i].place_name}</strong><span>${address}</span>`;
             
-            itemEl.innerHTML = `<strong>${places[i].place_name}</strong><br><span>${places[i].address_name}</span>`;
-            
-            // 목록 클릭 시 지도를 해당 위치로 이동
+            // 3. 마커 클릭 시 인포윈도우(팝업) 표시 이벤트 바인딩
+            kakao.maps.event.addListener(marker, 'click', function() {
+                displayInfowindow(marker, places[i]);
+            });
+
+            // 4. 목록 아이템 클릭 시 지도 이동 및 인포윈도우 표시 이벤트 바인딩
             itemEl.onclick = function() {
                 map.panTo(placePosition);
-                displayInfowindow(places[i]);
+                displayInfowindow(marker, places[i]);
             };
 
             listEl.appendChild(itemEl);
@@ -187,14 +224,33 @@
         map.setBounds(bounds);
     }
 
-    // 정보창을 지도에 표시하는 함수
-    function displayInfowindow(place) {
-        const content = `<div style="padding:5px;font-size:12px;">${place.place_name}</div>`;
+    // 정보창(팝업)을 지도에 표시하는 함수
+    function displayInfowindow(marker, place) {
+        const content = `
+            <div style="padding:10px; font-size:12px; line-height:1.5;">
+                <strong style="color:#0056b3;">${place.place_name}</strong><br>
+                <span style="color:#666; font-size:11px;">${place.category_name.split(' > ').pop()}</span>
+            </div>
+        `;
         infowindow.setContent(content);
-        infowindow.open(map, new kakao.maps.Marker({
-            position: new kakao.maps.LatLng(place.y, place.x),
-            map: map
-        }));
+        // 생성해 둔 정식 마커 위에 인포윈도우를 연결해야 깨끗하게 뜸
+        infowindow.open(map, marker);
+    }
+
+    // 새로 검색할 때 기존 마커와 리스트 결과를 지워주는 함수
+    function clearResults() {
+        // 기존 마커 전체 제거
+        for (let i = 0; i < markers.length; i++) {
+            markers[i].setMap(null);
+        }
+        markers = []; // 배열 초기화
+
+        // 왼쪽 리스트 비우기
+        const listEl = document.getElementById('placesList');
+        listEl.innerHTML = '';
+
+        // 열려있던 인포윈도우 닫기
+        infowindow.close();
     }
 </script>
 
