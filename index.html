@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>카카오맵 장소 검색 서비스</title>
+    <title>카카오맵 카테고리 검색 서비스</title>
     <style>
         /* CSS: 화면 레이아웃 설정 */
         * {
@@ -23,7 +23,7 @@
             width: 100%;
         }
 
-        /* 왼쪽 검색창 섹션 */
+        /* 왼쪽 검색창 및 탭 섹션 */
         .sidebar {
             width: 350px;
             height: 100%;
@@ -32,10 +32,12 @@
             overflow-y: auto;
             border-right: 1px solid #ddd;
             z-index: 10;
+            display: flex;
+            flex-direction: column;
         }
 
         .search-box {
-            margin-bottom: 20px;
+            margin-bottom: 15px;
             display: flex;
             gap: 5px;
         }
@@ -50,25 +52,48 @@
 
         .search-box button {
             padding: 10px 15px;
-            background-color: #fee500; /* 카카오 노란색 */
+            background-color: #fee500;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
         }
 
-        .search-box button:hover {
-            background-color: #fada0a;
+        /* 카테고리 탭 스타일 */
+        .category-tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active {
+            background-color: #333;
+            color: #fff;
+            border-color: #333;
         }
 
         /* 오른쪽 지도 섹션 */
         .map-area {
-            flex: 1; /* 남은 공간 모두 차지 */
+            flex: 1;
             height: 100%;
         }
 
         #placesList {
-            margin-top: 15px;
+            flex: 1;
+            overflow-y: auto;
         }
 
         #placesList li {
@@ -104,6 +129,12 @@
             <input type="text" id="keyword" placeholder="장소를 입력하세요" onkeypress="if(event.key === 'Enter') searchPlaces()">
             <button onclick="searchPlaces()">검색</button>
         </div>
+
+        <div class="category-tabs">
+            <button class="tab-btn" onclick="changeCategory('올리브영', this)">올리브영</button>
+            <button class="tab-btn" onclick="changeCategory('편의점', this)">편의점</button>
+        </div>
+        
         <hr>
         <ul id="placesList"></ul>
     </div>
@@ -114,64 +145,90 @@
 <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=ecb7dbd146bceb26d523cb008b35e8eb&libraries=services"></script>
 
 <script>
-    // JavaScript: 지도 제어 및 검색 로직
     let map;
-    let ps; // 장소 검색 객체
-    let infowindow; // 정보창 객체
-    let markers = []; // 생성된 마커들을 관리할 배열 (초기화용)
+    let ps; 
+    let infowindow; 
+    let markers = []; // 검색된 장소 마커 배열
+    let currentMarker = null; // 현재 위치 마커를 기억할 변수
+    let currentCategory = ''; // 현재 선택된 카테고리 저장용
 
-    // 1. 페이지 로드 시 실행 (지도가 제대로 로드된 후 실행되도록 함)
+    // 마커 이미지 정보 설정 (카카오맵 기본 제공 이미지 주소 활용)
+    const markerImages = {
+        'myLocation': 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_blue.png', // 현재 위치 (파란색)
+        '올리브영': 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_number_blue.png', // 올리브영용 (연두/초록 대용 파란색 숫자핀 세트의 1번 활용 가능하나 여기선 샘플 범용 이미지 사용)
+        '편의점': 'https://t1.daumcdn.net/localimg/localimages/07/2012/img/marker_p.png', // 편의점용 (주황/빨간색 계열 P 마커)
+        'default': 'https://t1.daumcdn.net/mapjsapi/images/2x/marker.png' // 기본 검색용
+    };
+
     kakao.maps.load(function() {
         const mapContainer = document.getElementById('map');
         const mapOption = {
-            center: new kakao.maps.LatLng(37.566826, 126.9786567), // 기본 중심 좌표 (서울시청)
-            level: 5 // 확대 레벨
+            center: new kakao.maps.LatLng(37.566826, 126.9786567), 
+            level: 4 
         };
 
-        // 지도 생성
         map = new kakao.maps.Map(mapContainer, mapOption);
-        
-        // 장소 검색 객체 생성
         ps = new kakao.maps.services.Places();
-        
-        // 검색 결과 클릭 시 띄울 정보창 생성
         infowindow = new kakao.maps.InfoWindow({zIndex: 1});
 
-        // 2. 현재 위치 가져오기 (위치 권한 요청)
+        // 현재 위치 가져오기 및 표시
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(function(position) {
-                const lat = position.coords.latitude; // 위도
-                const lon = position.coords.longitude; // 경도
+                const lat = position.coords.latitude; 
+                const lon = position.coords.longitude; 
                 const locPosition = new kakao.maps.LatLng(lat, lon);
 
-                // 지도의 중심을 현재 위치로 이동
                 map.setCenter(locPosition);
                 
-                // 현재 위치에 기본 마커 표시
-                const currentMarker = new kakao.maps.Marker({
+                // 현재 위치 전용 마커 이미지 적용 (파란색 핀)
+                const imageSize = new kakao.maps.Size(35, 35);
+                const markerImage = new kakao.maps.MarkerImage(markerImages['myLocation'], imageSize);
+
+                currentMarker = new kakao.maps.Marker({
                     map: map,
-                    position: locPosition
+                    position: locPosition,
+                    image: markerImage
                 });
             });
-        } else {
-            alert("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
         }
     });
 
+    // 탭 클릭 시 카테고리 전환 및 검색 함수
+    function changeCategory(category, element) {
+        // 기존 active 클래스 제거 및 현재 버튼에 추가
+        const tabs = document.querySelectorAll('.tab-btn');
+        tabs.forEach(tab => tab.classList.remove('active'));
+        element.classList.add('active');
+
+        currentCategory = category; // 현재 카테고리 상태 기록
+        document.getElementById('keyword').value = category; // 검색창 텍스트 변경
+        
+        searchPlaces(); // 검색 실행
+    }
+
     // 장소 검색 실행 함수
     function searchPlaces() {
-        const keyword = document.getElementById('keyword').value;
+        let keyword = document.getElementById('keyword').value.trim();
 
-        if (!keyword.replace(/^\s+|\s+$/g, '')) {
+        if (!keyword) {
             alert('키워드를 입력해주세요!');
             return;
         }
 
-        // 카카오맵 키워드 검색 서비스 실행
-        ps.keywordSearch(keyword, placesSearchCB);
+        // 탭을 누르지 않고 검색창에 직접 타이핑했을 때 카테고리 매칭 처리
+        if (keyword.includes('올리브영')) currentCategory = '올리브영';
+        else if (keyword.includes('편의점')) currentCategory = '편의점';
+        else currentCategory = 'default';
+
+        // 현 지도 중심(보통 현재 위치) 기준으로 주변 장소 검색하도록 옵션 추가
+        const searchOptions = {
+            location: map.getCenter(),
+            radius: 2000 // 중심 기준 반경 2km 이내 검색
+        };
+
+        ps.keywordSearch(keyword, placesSearchCB, searchOptions);
     }
 
-    // 장소 검색 결과 콜백 함수
     function placesSearchCB(data, status, pagination) {
         if (status === kakao.maps.services.Status.OK) {
             displayPlaces(data);
@@ -182,35 +239,42 @@
         }
     }
 
-    // 검색된 장소 목록과 마커를 화면에 표시하는 함수
     function displayPlaces(places) {
         const listEl = document.getElementById('placesList');
         const bounds = new kakao.maps.LatLngBounds();
         
-        // 새로운 검색을 위해 기존 마커와 리스트 내용 지우기 (초기화)
-        clearResults();
+        clearResults(); // 검색 마커만 지우고, 내 위치 마커(currentMarker)는 유지됨
+
+        // 카테고리에 맞는 마커 이미지 결정
+        let imageUrl = markerImages[currentCategory] || markerImages['default'];
+        
+        // 예외 처리: 올리브영일 때 조금 더 눈에 띄는 다른 샘플 이미지가 필요하다면 할당
+        if (currentCategory === '올리브영') {
+            imageUrl = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_star.png'; // 올리브영은 별 마커로 대체해볼게!
+        }
+
+        const imageSize = new kakao.maps.Size(24, 35);
+        const markerImage = new kakao.maps.MarkerImage(imageUrl, imageSize);
 
         for (let i = 0; i < places.length; i++) {
             const placePosition = new kakao.maps.LatLng(places[i].y, places[i].x);
             
-            // 1. 지도에 마커 생성 및 표시
+            // 변경된 커스텀 이미지로 마커 생성
             const marker = new kakao.maps.Marker({
                 position: placePosition,
-                map: map
+                map: map,
+                image: markerImage 
             });
-            markers.push(marker); // 나중에 지울 수 있도록 배열에 보관
+            markers.push(marker); 
 
-            // 2. 왼쪽 리스트에 들어갈 아이템 엘리먼트 생성 (이름과 주소 나열)
             const itemEl = document.createElement('li');
             const address = places[i].road_address_name ? places[i].road_address_name : places[i].address_name;
             itemEl.innerHTML = `<strong>${places[i].place_name}</strong><span>${address}</span>`;
             
-            // 3. 마커 클릭 시 인포윈도우(팝업) 표시 이벤트 바인딩
             kakao.maps.event.addListener(marker, 'click', function() {
                 displayInfowindow(marker, places[i]);
             });
 
-            // 4. 목록 아이템 클릭 시 지도 이동 및 인포윈도우 표시 이벤트 바인딩
             itemEl.onclick = function() {
                 map.panTo(placePosition);
                 displayInfowindow(marker, places[i]);
@@ -220,37 +284,32 @@
             bounds.extend(placePosition);
         }
 
-        // 검색된 장소들이 모두 보이도록 지도 범위 조정
         map.setBounds(bounds);
     }
 
-    // 정보창(팝업)을 지도에 표시하는 함수
     function displayInfowindow(marker, place) {
         const content = `
-            <div style="padding:10px; font-size:12px; line-height:1.5;">
-                <strong style="color:#0056b3;">${place.place_name}</strong><br>
-                <span style="color:#666; font-size:11px;">${place.category_name.split(' > ').pop()}</span>
+            <div style="padding:10px; font-size:12px; line-height:1.5; min-width:150px;">
+                <strong style="color:#222;">${place.place_name}</strong><br>
+                <span style="color:#666; font-size:11px;">${place.phone || '전화번호 없음'}</span>
             </div>
         `;
         infowindow.setContent(content);
-        // 생성해 둔 정식 마커 위에 인포윈도우를 연결해야 깨끗하게 뜸
         infowindow.open(map, marker);
     }
 
-    // 새로 검색할 때 기존 마커와 리스트 결과를 지워주는 함수
     function clearResults() {
-        // 기존 마커 전체 제거
+        // 검색용 마커들만 지우기
         for (let i = 0; i < markers.length; i++) {
             markers[i].setMap(null);
         }
-        markers = []; // 배열 초기화
+        markers = []; 
 
-        // 왼쪽 리스트 비우기
         const listEl = document.getElementById('placesList');
         listEl.innerHTML = '';
 
-        // 열려있던 인포윈도우 닫기
         infowindow.close();
+        // 참고: currentMarker(내 위치)는 건드리지 않으므로 계속 지도에 남아있어!
     }
 </script>
 
